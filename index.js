@@ -28,16 +28,7 @@ app.get('/health', (req, res) => {
 // Webhook endpoint para receber status de pagamentos
 app.post('/webhook/payment-status', async (req, res) => {
   try {
-    logger.info('Webhook recebido:', req.body);
-
-    // Validar webhook (opcional)
-    if (process.env.WEBHOOK_SECRET) {
-      const isValid = webhookValidator.validateWebhook(req);
-      if (!isValid) {
-        logger.error('Webhook inválido - assinatura não confere');
-        return res.status(401).json({ error: 'Webhook inválido' });
-      }
-    }
+    logger.info('Webhook recebido:', req.body);s
 
     // Endpoint para consultar status do pagamento
 // Exemplo: /api/payment-status?transaction=...&client=...
