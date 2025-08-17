@@ -28,33 +28,16 @@ app.get('/health', (req, res) => {
 // Webhook endpoint para receber status de pagamentos
 app.post('/webhook/payment-status', async (req, res) => {
   try {
-    logger.info('Webhook recebido:', req.body);s
+    logger.info('Webhook recebido:', req.body);
 
-    // Endpoint para consultar status do pagamento
-// Exemplo: /api/payment-status?transaction=...&client=...
-app.get('/api/payment-status', async (req, res) => {
-  const { transaction, client } = req.query;
-  if (!transaction || !client) {
-    return res.status(400).json({ error: 'Parâmetros obrigatórios ausentes.' });
-  }
-
-  // Aqui você deve consultar o status do pagamento na sua base de dados ou serviço externo
-  // Exemplo fictício: buscar no banco ou cache
-  // Substitua por sua lógica real
-  try {
-    // Exemplo: consulta fictícia
-    // const payment = await PaymentModel.findOne({ transactionId: transaction, clientIdentifier: client });
-    // if (!payment) return res.status(404).json({ error: 'Pagamento não encontrado.' });
-    // return res.json({ status: payment.status });
-
-    // Simulação: sempre retorna status PENDING
-    // Troque por integração real!
-    return res.json({ status: 'PENDING' });
-  } catch (error) {
-    logger.error('Erro ao consultar status do pagamento:', error);
-    return res.status(500).json({ error: 'Erro interno ao consultar pagamento.' });
-  }
-});
+    // Validar webhook (opcional)
+    if (process.env.WEBHOOK_SECRET) {
+      const isValid = webhookValidator.validateWebhook(req);
+      if (!isValid) {
+        logger.error('Webhook inválido - assinatura não confere');
+        return res.status(401).json({ error: 'Webhook inválido' });
+      }
+    }
 
     const webhookData = req.body;
     
