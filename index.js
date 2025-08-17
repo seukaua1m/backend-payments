@@ -39,6 +39,32 @@ app.post('/webhook/payment-status', async (req, res) => {
       }
     }
 
+    // Endpoint para consultar status do pagamento
+// Exemplo: /api/payment-status?transaction=...&client=...
+app.get('/api/payment-status', async (req, res) => {
+  const { transaction, client } = req.query;
+  if (!transaction || !client) {
+    return res.status(400).json({ error: 'Parâmetros obrigatórios ausentes.' });
+  }
+
+  // Aqui você deve consultar o status do pagamento na sua base de dados ou serviço externo
+  // Exemplo fictício: buscar no banco ou cache
+  // Substitua por sua lógica real
+  try {
+    // Exemplo: consulta fictícia
+    // const payment = await PaymentModel.findOne({ transactionId: transaction, clientIdentifier: client });
+    // if (!payment) return res.status(404).json({ error: 'Pagamento não encontrado.' });
+    // return res.json({ status: payment.status });
+
+    // Simulação: sempre retorna status PENDING
+    // Troque por integração real!
+    return res.json({ status: 'PENDING' });
+  } catch (error) {
+    logger.error('Erro ao consultar status do pagamento:', error);
+    return res.status(500).json({ error: 'Erro interno ao consultar pagamento.' });
+  }
+});
+
     const webhookData = req.body;
     
     // Verificar se o pagamento foi aprovado
