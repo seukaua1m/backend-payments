@@ -73,6 +73,19 @@ function formatWebhookForUtmify(webhook) {
     CHARGEDBACK: "chargedback",
   };
 
+  // Helper para UTM: nunca null, sempre string
+  function utm(val) {
+    return typeof val === "string" && val.trim() ? val : "";
+  }
+
+  // Formatar telefone para padrão internacional
+  function formatPhone(phone) {
+    if (!phone) return "";
+    let p = phone.replace(/[^0-9]/g, "");
+    if (!p.startsWith("55")) p = "55" + p;
+    return "+" + p;
+  }
+
   return {
     orderId: webhook.paymentId || webhook.customId || webhook.id || "",
     platform: "NivoPay",
@@ -85,37 +98,30 @@ function formatWebhookForUtmify(webhook) {
     customer: {
       name: webhook.customer?.name || "",
       email: webhook.customer?.email || "",
-      phone: webhook.customer?.phone
-        ? webhook.customer.phone.replace("+", "")
-        : null,
-      document: webhook.customer?.cpf || null,
-      country: "BR",
-      ip: webhook.customer?.ip || null,
+      phone: formatPhone(webhook.customer?.phone),
+      document: webhook.customer?.cpf || webhook.customer?.document || "",
     },
     products: Array.isArray(webhook.items)
       ? webhook.items.map((item) => ({
           id: item.id || "",
           name: item.title || item.name || "",
-          planId: null,
-          planName: null,
+          planId: item.planId || "",
+          planName: item.planName || "",
           quantity: item.quantity || 1,
-          priceInCents: item.unitPrice || 0,
+          priceInCents: item.unitPrice || item.priceInCents || 0,
         }))
       : [],
     trackingParameters: {
-      src: null,
-      sck: null,
-      utm_source: null,
-      utm_campaign: null,
-      utm_medium: null,
-      utm_content: null,
-      utm_term: null,
+      utm_source: utm(webhook.utm_source),
+      utm_medium: utm(webhook.utm_medium),
+      utm_campaign: utm(webhook.utm_campaign),
+      utm_content: utm(webhook.utm_content),
+      utm_term: utm(webhook.utm_term),
     },
     commission: {
-      totalPriceInCents: webhook.totalValue || 0,
-      gatewayFeeInCents: webhook.gatewayFeeInCents || 0,
-      userCommissionInCents: webhook.netValue || 0,
-      currency: "BRL",
+      totalPriceInCents: webhook.totalValue || webhook.amount || 0,
+      gatewayFeeInCents: webhook.gatewayFeeInCents || webhook.gatewayFee || 0,
+      userCommissionInCents: webhook.netValue || webhook.commission || 0,
     },
     isTest: false,
   };
@@ -123,7 +129,7 @@ function formatWebhookForUtmify(webhook) {
 
 // Função para enviar dados para Utmify
 async function sendToUtmify(utmifyPayload) {
-console.log('Payload para Utmify:', JSON.stringify(utmifyPayload, null, 2)); 
+  console.log('Payload para Utmify:', JSON.stringify(utmifyPayload, null, 2)); 
   const utmifyUrl = "https://api.utmify.com.br/api-credentials/orders";
   const utmifyToken = process.env.UTMIFY_TOKEN || "xmnHbQedr1FctddxFvm7U0lLcZzNBApfHhr1";
   await axios.post(utmifyUrl, utmifyPayload, {
