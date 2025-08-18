@@ -146,7 +146,7 @@ app.get('/payment/status', async (req, res) => {
     const apiUrl = `https://pay.nivopayoficial.com.br/api/v1/transaction.getPayment?id=${transactionId}`;
     const response = await axios.get(apiUrl, {
       headers: {
-        Authorization: process.env.EXTERNAL_API_SECRET_KEY
+        Authorization: process.env.SECRET_KEY
       }
     });
     const payment = response.data;
