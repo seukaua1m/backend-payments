@@ -4,9 +4,11 @@ const cors = require('cors');
 const crypto = require('crypto');
 require('dotenv').config();
 
+
 const metaService = require('./services/metaService');
 const webhookValidator = require('./utils/webhookValidator');
 const logger = require('./utils/logger');
+const paymentStore = require('./services/paymentStore');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -26,6 +28,7 @@ app.get('/health', (req, res) => {
 });
 
 // Webhook endpoint para receber status de pagamentos
+
 app.post('/webhook/payment-status', async (req, res) => {
   try {
     logger.info('Webhook recebido:', req.body);
@@ -40,10 +43,23 @@ app.post('/webhook/payment-status', async (req, res) => {
     }
 
     const webhookData = req.body;
-    
+    const transactionId = webhookData.id || webhookData.external_id;
+    if (!transactionId) {
+      logger.error('ID da transação ausente no webhook');
+      return res.status(400).json({ error: 'ID da transação ausente' });
+    }
+
     // Verificar se o pagamento foi aprovado
     const isPaymentApproved = checkPaymentStatus(webhookData);
-    
+
+    // Salvar status do pagamento
+    paymentStore.savePaymentStatus(transactionId, {
+      status: isPaymentApproved ? 'COMPLETED' : (webhookData.status || 'PENDING'),
+      amount: webhookData.amount,
+      customer: webhookData.customer,
+      items: webhookData.items || [],
+    });
+
     if (!isPaymentApproved) {
       logger.info('Pagamento não aprovado, ignorando webhook');
       return res.status(200).json({ message: 'Webhook recebido - pagamento não aprovado' });
@@ -110,6 +126,14 @@ app.post('/test/webhook', async (req, res) => {
       created_at: new Date().toISOString()
     };
 
+    // Salvar status do pagamento de teste
+    paymentStore.savePaymentStatus(testData.id, {
+      status: 'COMPLETED',
+      amount: testData.amount,
+      customer: testData.customer,
+      items: testData.items,
+    });
+
     // Simular processamento do webhook
     const customerData = extractCustomerData(testData);
     const transactionData = extractTransactionData(testData);
@@ -166,6 +190,20 @@ function extractTransactionData(webhookData) {
     timestamp: webhookData.created_at || new Date().toISOString()
   };
 }
+
+
+// Endpoint para consultar status do pagamento
+app.get('/payment/status', (req, res) => {
+  const transactionId = req.query.transaction;
+  if (!transactionId) {
+    return res.status(400).json({ error: 'Parâmetro transaction obrigatório.' });
+  }
+  const payment = paymentStore.getPaymentStatus(transactionId);
+  if (!payment) {
+    return res.status(404).json({ error: 'Pagamento não encontrado.' });
+  }
+  return res.json({ status: payment.status, amount: payment.amount, customer: payment.customer, items: payment.items, updatedAt: payment.updatedAt });
+});
 
 // Iniciar servidor
 app.listen(PORT, () => {
