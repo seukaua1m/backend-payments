@@ -115,9 +115,11 @@ function formatWebhookForUtmify(webhook) {
     return "+" + p;
   }
 
-  // Extrair UTM da string, se existir
+  // Extrair UTM da propriedade 'utm' (string) ou 'utmString', se existir
   let utmParams = {};
-  if (webhook.utmString) {
+  if (webhook.utm) {
+    utmParams = parseUtmString(webhook.utm);
+  } else if (webhook.utmString) {
     utmParams = parseUtmString(webhook.utmString);
   } else {
     utmParams = {
