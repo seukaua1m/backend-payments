@@ -199,7 +199,6 @@ function extractTransactionData(webhookData) {
 
 
 // Endpoint para consultar status do pagamento usando API externa
-const axios = require('axios');
 app.get('/payment/status', async (req, res) => {
   const transactionId = req.query.transaction;
   if (!transactionId) {
@@ -239,3 +238,4 @@ app.listen(PORT, () => {
 });
 
 module.exports = app;
+
