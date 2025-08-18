@@ -126,13 +126,15 @@ async function sendPendingSaleToUtmify(pendingSale) {
     utmParams.utm_campaign = pendingSale.utm_campaign || '';
     utmParams.utm_content = pendingSale.utm_content || '';
     utmParams.utm_term = pendingSale.utm_term || '';
+    utmParams.src = pendingSale.src || null;
+  utmParams.sck = pendingSale.sck || null;
   }
 
   let products = Array.isArray(pendingSale.items) ? pendingSale.items.map(item => ({
     id: item.id || '',
     name: item.name || item.title || '',
-    planId: '',
-    planName: '',
+    planId: item.planId !== undefined ? item.planId : null,
+    planName: item.planName !== undefined ? item.planName : null,
     quantity: item.quantity || 1,
     priceInCents: item.price || item.unitPrice || pendingSale.amount || 0
   })) : [];
@@ -140,19 +142,29 @@ async function sendPendingSaleToUtmify(pendingSale) {
     products = [pendingSale.product];
   }
 
+  // Formata data
+  function formatDate(date) {
+    if (!date) return null;
+    const d = new Date(date);
+    return d.toISOString().replace('T', ' ').substring(0, 19);
+  }
+
+
   const body = {
     orderId: pendingSale.customId || pendingSale.id || pendingSale.externalId || pendingSale.external_id || '',
     platform: 'NivoPay',
     paymentMethod: (pendingSale.paymentMethod || pendingSale.method || 'pix').toLowerCase(),
     status: 'waiting_payment',
-    createdAt: pendingSale.createdAt || pendingSale.created_at || new Date().toISOString(),
+    createdAt: formatDate(pendingSale.createdAt || pendingSale.created_at || new Date()),
     approvedDate: null,
     refundedAt: null,
     customer: {
       name: pendingSale.customer?.name || '',
       email: pendingSale.customer?.email || '',
+      phone: pendingSale.customer?.phone || '',
       document: pendingSale.customer?.cpf || pendingSale.customer?.document || '',
-      phone: pendingSale.customer?.phone || ''
+      country: pendingSale.customer?.country || 'BR',
+      ip: pendingSale.customer?.ip || pendingSale.ip || null
     },
     products,
     trackingParameters: utmParams,
