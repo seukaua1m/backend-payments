@@ -277,7 +277,7 @@ async function sendToUtmify(webhookData) {
 
   const utmifyUrl = 'https://api.utmify.com.br/api-credentials/orders';
   const utmifyToken = process.env.UTMIFY_TOKEN || 'xmnHbQedr1FctddxFvm7U0lLcZzNBApfHhr1';
-
+  console.log('Payload enviado para Utmify:', JSON.stringify(body, null, 2));
   await axios.post(utmifyUrl, body, {
     headers: {
       'Content-Type': 'application/json',
