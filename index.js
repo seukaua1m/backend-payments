@@ -33,6 +33,25 @@ app.post("/webhook/nivopay-debug", (req, res) => {
   res.status(200).json({ message: "Payload recebido", payload: req.body });
 });
 
+// Função para extrair parâmetros UTM de string
+function parseUtmString(utmString) {
+  if (!utmString || typeof utmString !== 'string') return {
+    utm_source: '',
+    utm_medium: '',
+    utm_campaign: '',
+    utm_content: '',
+    utm_term: ''
+  };
+  const params = new URLSearchParams(utmString);
+  return {
+    utm_source: params.get('utm_source') || '',
+    utm_medium: params.get('utm_medium') || '',
+    utm_campaign: params.get('utm_campaign') || '',
+    utm_content: params.get('utm_content') || '',
+    utm_term: params.get('utm_term') || ''
+  };
+}
+
 // Webhook endpoint para receber status de pagamentos
 app.post("/webhook/payment-status", async (req, res) => {
   try {
@@ -86,6 +105,20 @@ function formatWebhookForUtmify(webhook) {
     return "+" + p;
   }
 
+  // Extrair UTM da string, se existir
+  let utmParams = {};
+  if (webhook.utmString) {
+    utmParams = parseUtmString(webhook.utmString);
+  } else {
+    utmParams = {
+      utm_source: utm(webhook.utm_source),
+      utm_medium: utm(webhook.utm_medium),
+      utm_campaign: utm(webhook.utm_campaign),
+      utm_content: utm(webhook.utm_content),
+      utm_term: utm(webhook.utm_term),
+    };
+  }
+
   return {
     orderId: webhook.paymentId || webhook.customId || webhook.id || "",
     platform: "NivoPay",
@@ -111,13 +144,7 @@ function formatWebhookForUtmify(webhook) {
           priceInCents: item.unitPrice || item.priceInCents || 0,
         }))
       : [],
-    trackingParameters: {
-      utm_source: utm(webhook.utm_source),
-      utm_medium: utm(webhook.utm_medium),
-      utm_campaign: utm(webhook.utm_campaign),
-      utm_content: utm(webhook.utm_content),
-      utm_term: utm(webhook.utm_term),
-    },
+    trackingParameters: utmParams,
     commission: {
       totalPriceInCents: webhook.totalValue || webhook.amount || 0,
       gatewayFeeInCents: webhook.gatewayFeeInCents || webhook.gatewayFee || 0,
