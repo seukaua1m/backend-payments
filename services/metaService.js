@@ -1,157 +1,200 @@
-const express = require('express');
-const bodyParser = require('body-parser');
-const cors = require('cors');
+const axios = require('axios');
 const crypto = require('crypto');
-require('dotenv').config();
+const logger = require('../utils/logger');
 
+class MetaService {
+  constructor() {
+    this.pixelId = process.env.META_PIXEL_ID;
+    this.accessToken = process.env.META_ACCESS_TOKEN;
+    this.apiVersion = 'v18.0';
+    this.baseUrl = `https://graph.facebook.com/${this.apiVersion}`;
+  }
 
-const metaService = require('./services/metaService');
-const webhookValidator = require('./utils/webhookValidator');
-const logger = require('./utils/logger');
-const paymentStore = require('./services/paymentStore');
+  // Hash de dados sensíveis conforme exigido pela Meta
+  hashData(data) {
+    if (!data) return null;
+    return crypto.createHash('sha256').update(data.toLowerCase().trim()).digest('hex');
+  }
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+  // Normalizar telefone para formato internacional
+  normalizePhone(phone) {
+    if (!phone) return null;
+    
+    // Remove todos os caracteres não numéricos
+    let cleanPhone = phone.replace(/\D/g, '');
+    
+    // Se começar com 0, remove
+    if (cleanPhone.startsWith('0')) {
+      cleanPhone = cleanPhone.substring(1);
+    }
+    
+    // Se não começar com 55 (código do Brasil), adiciona
+    if (!cleanPhone.startsWith('55')) {
+      cleanPhone = '55' + cleanPhone;
+    }
+    
+    return cleanPhone;
+  }
 
-// Middleware
-app.use(cors());
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+  // Preparar dados do usuário para a Meta
+  prepareUserData(customer) {
+    logger.info('Dados recebidos para user_data:', customer);
+    const userData = {};
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'OK', 
-    timestamp: new Date().toISOString(),
-    service: 'Meta Webhook Backend'
-  });
-});
+    // Compatibilizar campos possíveis
+    const email = customer.email || customer.em;
+    const phone = customer.phone || customer.ph;
+    const name = customer.name || customer.fn;
 
-// Webhook endpoint para receber status de pagamentos
+    if (email) {
+      userData.em = [this.hashData(email)];
+    }
 
-app.post('/webhook/payment-status', async (req, res) => {
-  try {
-    logger.info('Webhook recebido:', req.body);
-
-    // Validar webhook (opcional)
-    if (process.env.WEBHOOK_SECRET) {
-      const isValid = webhookValidator.validateWebhook(req);
-      if (!isValid) {
-        logger.error('Webhook inválido - assinatura não confere');
-        return res.status(401).json({ error: 'Webhook inválido' });
+    if (phone) {
+      const normalizedPhone = this.normalizePhone(phone);
+      if (normalizedPhone) {
+        userData.ph = [this.hashData(normalizedPhone)];
       }
     }
 
-    const webhookData = req.body;
-    const transactionId = webhookData.id || webhookData.external_id;
-    if (!transactionId) {
-      logger.error('ID da transação ausente no webhook');
-      return res.status(400).json({ error: 'ID da transação ausente' });
+    if (name) {
+      const nameParts = name.trim().split(' ');
+      if (nameParts.length > 0) {
+        userData.fn = [this.hashData(nameParts[0])]; // Primeiro nome
+      }
+      if (nameParts.length > 1) {
+        userData.ln = [this.hashData(nameParts[nameParts.length - 1])]; // Último nome
+      }
     }
 
-    // Verificar se o pagamento foi aprovado
-    const isPaymentApproved = checkPaymentStatus(webhookData);
+    // Adicionar país (Brasil)
+    userData.country = [this.hashData('br')];
 
-    // Salvar status do pagamento
-    paymentStore.savePaymentStatus(transactionId, {
-      status: isPaymentApproved ? 'COMPLETED' : (webhookData.status || 'PENDING'),
-      amount: webhookData.amount,
-      customer: webhookData.customer,
-      items: webhookData.items || [],
-    });
+    logger.info('user_data preparado para Meta:', userData);
+    return userData;
+  }
 
-    if (!isPaymentApproved) {
-      logger.info('Pagamento não aprovado, ignorando webhook');
-      return res.status(200).json({ message: 'Webhook recebido - pagamento não aprovado' });
+  // Preparar dados customizados da transação
+  prepareCustomData(transaction) {
+    logger.info('Dados recebidos para custom_data:', transaction);
+    const customData = {
+      currency: transaction.currency || 'BRL',
+      value: transaction.value || transaction.amount / 100 || 0
+    };
+
+    // Adicionar IDs dos produtos se disponível
+    if (transaction.items && transaction.items.length > 0) {
+      customData.content_ids = transaction.items.map(item => 
+        item.id || item.title || 'E-book'
+      );
+      customData.content_type = 'product';
+      customData.num_items = transaction.items.reduce((sum, item) => 
+        sum + (item.quantity || 1), 0
+      );
     }
 
-    // Extrair dados do cliente e transação
-    const customerData = extractCustomerData(webhookData);
-    const transactionData = extractTransactionData(webhookData);
+    logger.info('custom_data preparado para Meta:', customData);
+    return customData;
+  }
 
-    if (!customerData || !transactionData) {
-      logger.error('Dados insuficientes no webhook');
-      return res.status(400).json({ error: 'Dados insuficientes' });
-    }
+  // Enviar evento de conversão para Meta Ads
+  async sendConversionEvent({ customer, transaction, eventSource = 'website' }) {
+    try {
+      if (!this.pixelId || !this.accessToken) {
+        throw new Error('META_PIXEL_ID ou META_ACCESS_TOKEN não configurados');
+      }
 
-    // Enviar evento de conversão para Meta Ads
-    const conversionResult = await metaService.sendConversionEvent({
-      customer: customerData,
-      transaction: transactionData,
-      eventSource: 'website'
-    });
+      const userData = this.prepareUserData(customer);
+      const customData = this.prepareCustomData(transaction);
 
-    if (conversionResult.success) {
-      logger.info('Evento de conversão enviado com sucesso para Meta Ads');
-      res.status(200).json({ 
-        message: 'Webhook processado com sucesso',
-        metaEventId: conversionResult.eventId
+      const eventData = {
+        data: [
+          {
+            event_name: 'Purchase',
+            event_time: Math.floor(new Date(transaction.timestamp).getTime() / 1000),
+            action_source: eventSource,
+            user_data: userData,
+            custom_data: customData,
+            event_source_url: 'https://your-domain.com', // Substitua pelo seu domínio
+            event_id: `purchase_${transaction.transactionId}_${Date.now()}`
+          }
+        ],
+        test_event_code: process.env.TEST_MODE === 'true' ? 'TEST12345' : undefined
+      };
+
+      // Remover test_event_code se não estiver em modo de teste
+      if (process.env.TEST_MODE !== 'true') {
+        delete eventData.test_event_code;
+      }
+
+      logger.info('Enviando evento para Meta Ads:', {
+        pixelId: this.pixelId,
+        eventData: eventData
       });
-    } else {
-      logger.error('Erro ao enviar evento para Meta Ads:', conversionResult.error);
-      res.status(500).json({ error: 'Erro ao processar conversão' });
+
+      const response = await axios.post(
+        `${this.baseUrl}/${this.pixelId}/events`,
+        eventData,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.accessToken}`
+          },
+          timeout: 10000 // 10 segundos de timeout
+        }
+      );
+
+  logger.info('Resposta da Meta Ads:', response.data);
+
+      return {
+        success: true,
+        eventId: eventData.data[0].event_id,
+        response: response.data
+      };
+
+    } catch (error) {
+      logger.error('Erro ao enviar evento para Meta Ads:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        stack: error.stack
+      });
+
+      return {
+        success: false,
+        error: error.message,
+        details: error.response?.data
+      };
     }
-
-  } catch (error) {
-    logger.error('Erro no processamento do webhook:', error);
-    res.status(500).json({ error: 'Erro interno do servidor' });
   }
-});
 
-// Funções auxiliares
-function checkPaymentStatus(webhookData) {
-  const status = webhookData.status?.toLowerCase();
-  return status === 'paid' || status === 'approved' || status === 'completed';
+  // Testar conexão com Meta Ads
+  async testConnection() {
+    try {
+      const response = await axios.get(
+        `${this.baseUrl}/${this.pixelId}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`
+          },
+          params: {
+            fields: 'name,id'
+          }
+        }
+      );
+
+      return {
+        success: true,
+        pixelInfo: response.data
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message,
+        details: error.response?.data
+      };
+    }
+  }
 }
 
-function extractCustomerData(webhookData) {
-  const customer = webhookData.customer || webhookData;
-  
-  if (!customer.email || !customer.name) {
-    return null;
-  }
-
-  return {
-    email: customer.email,
-    name: customer.name,
-    phone: customer.phone || '',
-    cpf: customer.cpf || customer.document || ''
-  };
-}
-
-function extractTransactionData(webhookData) {
-  if (!webhookData.amount) {
-    return null;
-  }
-
-  return {
-    transactionId: webhookData.id || webhookData.external_id,
-    value: webhookData.amount / 100, // Converter centavos para reais
-    currency: 'BRL',
-    items: webhookData.items || [],
-    timestamp: webhookData.created_at || new Date().toISOString()
-  };
-}
-
-
-// Endpoint para consultar status do pagamento
-app.get('/payment/status', (req, res) => {
-  const transactionId = req.query.transaction;
-  if (!transactionId) {
-    return res.status(400).json({ error: 'Parâmetro transaction obrigatório.' });
-  }
-  const payment = paymentStore.getPaymentStatus(transactionId);
-  if (!payment) {
-    return res.status(404).json({ error: 'Pagamento não encontrado.' });
-  }
-  return res.json({ status: payment.status, amount: payment.amount, customer: payment.customer, items: payment.items, updatedAt: payment.updatedAt });
-});
-
-// Iniciar servidor
-app.listen(PORT, () => {
-  logger.info(`Servidor rodando na porta ${PORT}`);
-  logger.info(`Ambiente: ${process.env.NODE_ENV || 'development'}`);
-  logger.info(`Modo de teste: ${process.env.TEST_MODE === 'true' ? 'Ativado' : 'Desativado'}`);
-});
-
-module.exports = app;
+module.exports = new MetaService();
