@@ -55,8 +55,16 @@ function parseUtmString(utmString) {
 // Webhook endpoint para receber status de pagamentos
 app.post("/webhook/payment-status", async (req, res) => {
   try {
-    const webhookData = req.body;
-    // Log do payload recebido
+    let webhookData = req.body;
+    // Se vier como string dentro de attributes.data, faz o parse
+    if (webhookData.attributes?.data && typeof webhookData.attributes.data === 'string') {
+      try {
+        webhookData = JSON.parse(webhookData.attributes.data);
+      } catch (e) {
+        logger.error("Erro ao fazer parse do JSON em attributes.data:", e);
+        return res.status(400).json({ error: "Payload inválido em attributes.data" });
+      }
+    }
     logger.info("Payload recebido no /webhook/payment-status:", JSON.stringify(webhookData, null, 2));
     try {
       const utmifyPayload = formatWebhookForUtmify(webhookData);
