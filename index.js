@@ -1,8 +1,4 @@
 // Endpoint simples para debug do webhook da NivoPay
-app.post('/webhook/nivopay-debug', (req, res) => {
-  logger.info('Payload recebido do webhook NivoPay:', req.body);
-  res.status(200).json({ message: 'Payload recebido', payload: req.body });
-});
 const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
@@ -31,6 +27,11 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     service: 'Meta Webhook Backend'
   });
+});
+
+app.post('/webhook/nivopay-debug', (req, res) => {
+  logger.info('Payload recebido do webhook NivoPay:', req.body);
+  res.status(200).json({ message: 'Payload recebido', payload: req.body });
 });
 
 // Webhook endpoint para receber status de pagamentos
