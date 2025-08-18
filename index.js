@@ -134,17 +134,37 @@ function extractTransactionData(webhookData) {
 }
 
 
-// Endpoint para consultar status do pagamento
-app.get('/payment/status', (req, res) => {
+// Endpoint para consultar status do pagamento usando API externa
+const axios = require('axios');
+app.get('/payment/status', async (req, res) => {
   const transactionId = req.query.transaction;
   if (!transactionId) {
     return res.status(400).json({ error: 'Parâmetro transaction obrigatório.' });
   }
-  const payment = paymentStore.getPaymentStatus(transactionId);
-  if (!payment) {
-    return res.status(404).json({ error: 'Pagamento não encontrado.' });
+  try {
+    // Substitua pela URL real da API externa
+    const apiUrl = `https://pay.nivopayoficial.com.br/api/v1/transaction.getPayment?id=${transactionId}`;
+    const response = await axios.get(apiUrl, {
+      headers: {
+        Authorization: process.env.EXTERNAL_API_SECRET_KEY
+      }
+    });
+    const payment = response.data;
+    // Retorne os dados relevantes para o frontend
+    return res.json({
+      status: payment.status,
+      amount: payment.amount,
+      customer: payment.customer,
+      items: payment.items,
+      updatedAt: payment.updatedAt,
+      method: payment.method,
+      id: payment.id,
+      customId: payment.customId
+    });
+  } catch (error) {
+    logger.error('Erro ao consultar status externo:', error.message);
+    return res.status(404).json({ error: 'Pagamento não encontrado ou erro na API externa.' });
   }
-  return res.json({ status: payment.status, amount: payment.amount, customer: payment.customer, items: payment.items, updatedAt: payment.updatedAt });
 });
 
 // Iniciar servidor
