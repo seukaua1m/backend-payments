@@ -123,6 +123,7 @@ function formatWebhookForUtmify(webhook) {
 
 // Função para enviar dados para Utmify
 async function sendToUtmify(utmifyPayload) {
+console.log('Payload para Utmify:', JSON.stringify(utmifyPayload, null, 2)); 
   const utmifyUrl = "https://api.utmify.com.br/api-credentials/orders";
   const utmifyToken = process.env.UTMIFY_TOKEN || "xmnHbQedr1FctddxFvm7U0lLcZzNBApfHhr1";
   await axios.post(utmifyUrl, utmifyPayload, {
