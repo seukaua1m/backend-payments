@@ -38,21 +38,27 @@ class MetaService {
 
   // Preparar dados do usuário para a Meta
   prepareUserData(customer) {
+    logger.info('Dados recebidos para user_data:', customer);
     const userData = {};
 
-    if (customer.email) {
-      userData.em = [this.hashData(customer.email)];
+    // Compatibilizar campos possíveis
+    const email = customer.email || customer.em;
+    const phone = customer.phone || customer.ph;
+    const name = customer.name || customer.fn;
+
+    if (email) {
+      userData.em = [this.hashData(email)];
     }
 
-    if (customer.phone) {
-      const normalizedPhone = this.normalizePhone(customer.phone);
+    if (phone) {
+      const normalizedPhone = this.normalizePhone(phone);
       if (normalizedPhone) {
         userData.ph = [this.hashData(normalizedPhone)];
       }
     }
 
-    if (customer.name) {
-      const nameParts = customer.name.trim().split(' ');
+    if (name) {
+      const nameParts = name.trim().split(' ');
       if (nameParts.length > 0) {
         userData.fn = [this.hashData(nameParts[0])]; // Primeiro nome
       }
@@ -64,20 +70,22 @@ class MetaService {
     // Adicionar país (Brasil)
     userData.country = ['br'];
 
+    logger.info('user_data preparado para Meta:', userData);
     return userData;
   }
 
   // Preparar dados customizados da transação
   prepareCustomData(transaction) {
+    logger.info('Dados recebidos para custom_data:', transaction);
     const customData = {
       currency: transaction.currency || 'BRL',
-      value: transaction.value
+      value: transaction.value || transaction.amount / 100 || 0
     };
 
     // Adicionar IDs dos produtos se disponível
     if (transaction.items && transaction.items.length > 0) {
       customData.content_ids = transaction.items.map(item => 
-        item.id || item.title || 'frete-cartao'
+        item.id || item.title || 'E-book'
       );
       customData.content_type = 'product';
       customData.num_items = transaction.items.reduce((sum, item) => 
@@ -85,6 +93,7 @@ class MetaService {
       );
     }
 
+    logger.info('custom_data preparado para Meta:', customData);
     return customData;
   }
 
@@ -120,7 +129,7 @@ class MetaService {
 
       logger.info('Enviando evento para Meta Ads:', {
         pixelId: this.pixelId,
-        eventData: JSON.stringify(eventData, null, 2)
+        eventData: eventData
       });
 
       const response = await axios.post(
@@ -135,7 +144,7 @@ class MetaService {
         }
       );
 
-      logger.info('Resposta da Meta Ads:', response.data);
+  logger.info('Resposta da Meta Ads:', response.data);
 
       return {
         success: true,
@@ -147,7 +156,8 @@ class MetaService {
       logger.error('Erro ao enviar evento para Meta Ads:', {
         message: error.message,
         response: error.response?.data,
-        status: error.response?.status
+        status: error.response?.status,
+        stack: error.stack
       });
 
       return {
