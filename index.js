@@ -56,6 +56,8 @@ function parseUtmString(utmString) {
 app.post("/webhook/payment-status", async (req, res) => {
   try {
     const webhookData = req.body;
+    // Log do payload recebido
+    logger.info("Payload recebido no /webhook/payment-status:", JSON.stringify(webhookData, null, 2));
     try {
       const utmifyPayload = formatWebhookForUtmify(webhookData);
       await sendToUtmify(utmifyPayload);
