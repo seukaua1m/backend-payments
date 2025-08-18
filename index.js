@@ -12,6 +12,89 @@ const webhookValidator = require('./utils/webhookValidator');
 const logger = require('./utils/logger');
 const paymentStore = require('./services/paymentStore');
 
+// Função para enviar venda pendente para Utmify
+async function sendPendingSaleToUtmify(pendingSale) {
+  // Parse UTM string se necessário
+  let utmParams = {
+    utm_source: '',
+    utm_medium: '',
+    utm_campaign: '',
+    utm_content: '',
+    utm_term: ''
+  };
+  if (pendingSale.utm) {
+    const utmArr = pendingSale.utm.split('&');
+    utmArr.forEach(pair => {
+      const [key, value] = pair.replace('?', '').split('=');
+      if (utmParams.hasOwnProperty(key)) utmParams[key] = value || '';
+    });
+  } else {
+    utmParams.utm_source = pendingSale.utm_source || '';
+    utmParams.utm_medium = pendingSale.utm_medium || '';
+    utmParams.utm_campaign = pendingSale.utm_campaign || '';
+    utmParams.utm_content = pendingSale.utm_content || '';
+    utmParams.utm_term = pendingSale.utm_term || '';
+  }
+
+  let products = Array.isArray(pendingSale.items) ? pendingSale.items.map(item => ({
+    id: item.id || '',
+    name: item.name || item.title || '',
+    planId: '',
+    planName: '',
+    quantity: item.quantity || 1,
+    priceInCents: item.price || item.unitPrice || pendingSale.amount || 0
+  })) : [];
+  if (products.length === 0 && pendingSale.product) {
+    products = [pendingSale.product];
+  }
+
+  const body = {
+    orderId: pendingSale.customId || pendingSale.id || pendingSale.externalId || pendingSale.external_id || '',
+    platform: 'NivoPay',
+    paymentMethod: (pendingSale.paymentMethod || pendingSale.method || 'pix').toLowerCase(),
+    status: 'waiting_payment',
+    createdAt: pendingSale.createdAt || pendingSale.created_at || new Date().toISOString(),
+    approvedDate: null,
+    refundedAt: null,
+    customer: {
+      name: pendingSale.customer?.name || '',
+      email: pendingSale.customer?.email || '',
+      document: pendingSale.customer?.cpf || pendingSale.customer?.document || '',
+      phone: pendingSale.customer?.phone || ''
+    },
+    products,
+    trackingParameters: utmParams,
+    commission: {
+      totalPriceInCents: pendingSale.totalValue || pendingSale.amount || 0,
+      gatewayFeeInCents: pendingSale.gatewayFeeInCents || 0,
+      userCommissionInCents: pendingSale.netValue || pendingSale.userCommissionInCents || 0
+    },
+    isTest: pendingSale.isTest || false
+  };
+
+  const utmifyUrl = 'https://api.utmify.com.br/api-credentials/orders';
+  const utmifyToken = process.env.UTMIFY_TOKEN || 'xmnHbQedr1FctddxFvm7U0lLcZzNBApfHhr1';
+
+  await axios.post(utmifyUrl, body, {
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-token': utmifyToken
+    }
+  });
+}
+
+// Endpoint para disparar manualmente venda pendente para Utmify
+app.post('/send-pending-sale', async (req, res) => {
+  try {
+    const pendingSale = req.body;
+    await sendPendingSaleToUtmify(pendingSale);
+    res.status(200).json({ message: 'Venda pendente enviada para Utmify com sucesso.' });
+  } catch (error) {
+    logger.error('Erro ao enviar venda pendente para Utmify:', error.message);
+    res.status(500).json({ error: 'Erro ao enviar venda pendente para Utmify.' });
+  }
+});
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
