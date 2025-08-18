@@ -114,40 +114,82 @@ app.post('/webhook/payment-status', async (req, res) => {
 });
 // Função para enviar dados para Utmify
 async function sendToUtmify(webhookData) {
-  // Montar o body conforme documentação Utmify, adaptando para estrutura NivoPay
+  // Parse UTM string se necessário
+  let utmParams = {
+    utm_source: '',
+    utm_medium: '',
+    utm_campaign: '',
+    utm_content: '',
+    utm_term: ''
+  };
+  if (webhookData.utm) {
+    const utmArr = webhookData.utm.split('&');
+    utmArr.forEach(pair => {
+      const [key, value] = pair.replace('?', '').split('=');
+      if (utmParams.hasOwnProperty(key)) utmParams[key] = value || '';
+    });
+  } else {
+    utmParams.utm_source = webhookData.utm_source || '';
+    utmParams.utm_medium = webhookData.utm_medium || '';
+    utmParams.utm_campaign = webhookData.utm_campaign || '';
+    utmParams.utm_content = webhookData.utm_content || '';
+    utmParams.utm_term = webhookData.utm_term || '';
+  }
+
+  // Mapear status para Utmify
+  let statusMap = {
+    'APPROVED': 'paid',
+    'PAID': 'paid',
+    'WAITING_PAYMENT': 'waiting_payment',
+    'REFUNDED': 'refunded',
+    'REFUSED': 'refused',
+    'CHARGEDBACK': 'chargedback'
+  };
+  let status = statusMap[(webhookData.status || '').toUpperCase()] || 'paid';
+
+  // Products
+  let products = Array.isArray(webhookData.items) ? webhookData.items.map(item => ({
+    id: item.id || '',
+    name: item.name || item.title || '',
+    planId: '',
+    planName: '',
+    quantity: item.quantity || 1,
+    priceInCents: item.price || item.unitPrice || webhookData.amount || 0
+  })) : [];
+  if (products.length === 0 && webhookData.product) {
+    products = [webhookData.product];
+  }
+
+  // Comissões
+  const totalPriceInCents = webhookData.totalValue || webhookData.amount || 0;
+  const gatewayFeeInCents = webhookData.gatewayFeeInCents || 0;
+  const userCommissionInCents = webhookData.netValue || webhookData.userCommissionInCents || 0;
+
+  // Datas
+  const createdAt = webhookData.createdAt || webhookData.created_at || new Date().toISOString();
+  const approvedDate = webhookData.approvedAt || webhookData.updatedAt || webhookData.updated_at || createdAt;
+
+  // Montar body final
   const body = {
-    orderId: webhookData.id || webhookData.customId || webhookData.external_id,
+    orderId: webhookData.customId || webhookData.id || webhookData.externalId || webhookData.external_id || '',
     platform: 'NivoPay',
-    paymentMethod: webhookData.method || 'pix',
-    status: webhookData.status ? webhookData.status.toLowerCase() : 'paid',
-    createdAt: webhookData.createdAt || webhookData.created_at || new Date().toISOString(),
-    approvedDate: webhookData.updatedAt || webhookData.updated_at || null,
+    paymentMethod: (webhookData.paymentMethod || webhookData.method || 'pix').toLowerCase(),
+    status,
+    createdAt,
+    approvedDate,
     refundedAt: webhookData.refundedAt || webhookData.refunded_at || null,
     customer: {
       name: webhookData.customer?.name || '',
       email: webhookData.customer?.email || '',
-      document: webhookData.customer?.cpf || '',
+      document: webhookData.customer?.cpf || webhookData.customer?.document || '',
       phone: webhookData.customer?.phone || ''
     },
-    products: Array.isArray(webhookData.items) ? webhookData.items.map(item => ({
-      id: item.id || '',
-      name: item.title || '',
-      planId: '',
-      planName: '',
-      quantity: item.quantity || 1,
-      priceInCents: item.unitPrice || webhookData.amount || 0
-    })) : [],
-    trackingParameters: {
-      utm_source: webhookData.utm_source || '',
-      utm_medium: webhookData.utm_medium || '',
-      utm_campaign: webhookData.utm_campaign || '',
-      utm_content: webhookData.utm_content || '',
-      utm_term: webhookData.utm_term || ''
-    },
+    products,
+    trackingParameters: utmParams,
     commission: {
-      totalPriceInCents: webhookData.amount || 0,
-      gatewayFeeInCents: webhookData.gatewayFeeInCents || 0,
-      userCommissionInCents: webhookData.userCommissionInCents || 0
+      totalPriceInCents,
+      gatewayFeeInCents,
+      userCommissionInCents
     },
     isTest: webhookData.isTest || false
   };
