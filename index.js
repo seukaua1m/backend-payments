@@ -36,74 +36,15 @@ app.post("/webhook/nivopay-debug", (req, res) => {
 // Webhook endpoint para receber status de pagamentos
 app.post("/webhook/payment-status", async (req, res) => {
   try {
-    logger.info("Webhook recebido:", req.body);
-
-    if (process.env.WEBHOOK_SECRET) {
-      const isValid = webhookValidator.validateWebhook(req);
-      if (!isValid) {
-        logger.error("Webhook inválido - assinatura não confere");
-        return res.status(401).json({ error: "Webhook inválido" });
-      }
-    }
-
     const webhookData = req.body;
-    const transactionId = webhookData.id || webhookData.external_id;
-    if (!transactionId) {
-      logger.error("ID da transação ausente no webhook");
-      return res.status(400).json({ error: "ID da transação ausente" });
-    }
-
-    const isPaymentApproved = checkPaymentStatus(webhookData);
-
-    paymentStore.savePaymentStatus(transactionId, {
-      status: isPaymentApproved ? "COMPLETED" : webhookData.status || "PENDING",
-      amount: webhookData.amount,
-      customer: webhookData.customer,
-      items: webhookData.items || [],
-    });
-
-    if (!isPaymentApproved) {
-      logger.info("Pagamento não aprovado, ignorando webhook");
-      return res
-        .status(200)
-        .json({ message: "Webhook recebido - pagamento não aprovado" });
-    }
-
-    const customerData = extractCustomerData(webhookData);
-    const transactionData = extractTransactionData(webhookData);
-
-    if (!customerData || !transactionData) {
-      logger.error("Dados insuficientes no webhook");
-      return res.status(400).json({ error: "Dados insuficientes" });
-    }
-
-    const conversionResult = await metaService.sendConversionEvent({
-      customer: customerData,
-      transaction: transactionData,
-      eventSource: "website",
-    });
-
     try {
       const utmifyPayload = formatWebhookForUtmify(webhookData);
       await sendToUtmify(utmifyPayload);
-      logger.info("Dados enviados para Utmify com sucesso");
+      logger.info("Venda enviada para Utmify");
     } catch (utmifyError) {
-      logger.error("Erro ao enviar dados para Utmify:", utmifyError.message);
+      logger.error("Erro ao enviar venda para Utmify:", utmifyError.message);
     }
-
-    if (conversionResult.success) {
-      logger.info("Evento de conversão enviado com sucesso para Meta Ads");
-      res.status(200).json({
-        message: "Webhook processado com sucesso",
-        metaEventId: conversionResult.eventId,
-      });
-    } else {
-      logger.error(
-        "Erro ao enviar evento para Meta Ads:",
-        conversionResult.error
-      );
-      res.status(500).json({ error: "Erro ao processar conversão" });
-    }
+    res.status(200).json({ message: "Webhook recebido e enviado para Utmify" });
   } catch (error) {
     logger.error("Erro no processamento do webhook:", error);
     res.status(500).json({ error: "Erro interno do servidor" });
