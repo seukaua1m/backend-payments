@@ -98,64 +98,6 @@ app.post('/webhook/payment-status', async (req, res) => {
   }
 });
 
-// Endpoint de teste para simular webhook
-app.post('/test/webhook', async (req, res) => {
-  if (process.env.NODE_ENV === 'production') {
-    return res.status(404).json({ error: 'Endpoint não disponível em produção' });
-  }
-
-  try {
-    const testData = {
-      id: 'test_' + Date.now(),
-      status: 'paid',
-      amount: 2830, // R$ 28,30 em centavos
-      customer: {
-        name: 'João Silva',
-        email: 'joao.silva@email.com',
-        cpf: '12345678901',
-        phone: '11999999999'
-      },
-      items: [
-        {
-          unitPrice: 2830,
-          title: 'Frete Cartão Virtual',
-          quantity: 1,
-          tangible: false
-        }
-      ],
-      created_at: new Date().toISOString()
-    };
-
-    // Salvar status do pagamento de teste
-    paymentStore.savePaymentStatus(testData.id, {
-      status: 'COMPLETED',
-      amount: testData.amount,
-      customer: testData.customer,
-      items: testData.items,
-    });
-
-    // Simular processamento do webhook
-    const customerData = extractCustomerData(testData);
-    const transactionData = extractTransactionData(testData);
-
-    const conversionResult = await metaService.sendConversionEvent({
-      customer: customerData,
-      transaction: transactionData,
-      eventSource: 'website'
-    });
-
-    res.status(200).json({
-      message: 'Teste executado com sucesso',
-      testData,
-      conversionResult
-    });
-
-  } catch (error) {
-    logger.error('Erro no teste:', error);
-    res.status(500).json({ error: 'Erro no teste' });
-  }
-});
-
 // Funções auxiliares
 function checkPaymentStatus(webhookData) {
   const status = webhookData.status?.toLowerCase();
