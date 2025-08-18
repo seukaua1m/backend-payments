@@ -5,16 +5,108 @@ const cors = require('cors');
 const crypto = require('crypto');
 require('dotenv').config();
 
-
 const metaService = require('./services/metaService');
 const axios = require('axios');
 const webhookValidator = require('./utils/webhookValidator');
 const logger = require('./utils/logger');
 const paymentStore = require('./services/paymentStore');
 
-// Função para enviar venda pendente para Utmify
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Middleware
+app.use(cors());
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    service: 'Meta Webhook Backend'
+  });
+});
+
+app.post('/webhook/nivopay-debug', (req, res) => {
+  logger.info('Payload recebido do webhook NivoPay:', req.body);
+  res.status(200).json({ message: 'Payload recebido', payload: req.body });
+});
+
+// Webhook endpoint para receber status de pagamentos
+app.post('/webhook/payment-status', async (req, res) => {
+  try {
+    logger.info('Webhook recebido:', req.body);
+
+    if (process.env.WEBHOOK_SECRET) {
+      const isValid = webhookValidator.validateWebhook(req);
+      if (!isValid) {
+        logger.error('Webhook inválido - assinatura não confere');
+        return res.status(401).json({ error: 'Webhook inválido' });
+      }
+    }
+
+    const webhookData = req.body;
+    const transactionId = webhookData.id || webhookData.external_id;
+    if (!transactionId) {
+      logger.error('ID da transação ausente no webhook');
+      return res.status(400).json({ error: 'ID da transação ausente' });
+    }
+
+    const isPaymentApproved = checkPaymentStatus(webhookData);
+
+    paymentStore.savePaymentStatus(transactionId, {
+      status: isPaymentApproved ? 'COMPLETED' : (webhookData.status || 'PENDING'),
+      amount: webhookData.amount,
+      customer: webhookData.customer,
+      items: webhookData.items || [],
+    });
+
+    if (!isPaymentApproved) {
+      logger.info('Pagamento não aprovado, ignorando webhook');
+      return res.status(200).json({ message: 'Webhook recebido - pagamento não aprovado' });
+    }
+
+    const customerData = extractCustomerData(webhookData);
+    const transactionData = extractTransactionData(webhookData);
+
+    if (!customerData || !transactionData) {
+      logger.error('Dados insuficientes no webhook');
+      return res.status(400).json({ error: 'Dados insuficientes' });
+    }
+
+    const conversionResult = await metaService.sendConversionEvent({
+      customer: customerData,
+      transaction: transactionData,
+      eventSource: 'website'
+    });
+
+    try {
+      await sendToUtmify(webhookData);
+      logger.info('Dados enviados para Utmify com sucesso');
+    } catch (utmifyError) {
+      logger.error('Erro ao enviar dados para Utmify:', utmifyError.message);
+    }
+
+    if (conversionResult.success) {
+      logger.info('Evento de conversão enviado com sucesso para Meta Ads');
+      res.status(200).json({ 
+        message: 'Webhook processado com sucesso',
+        metaEventId: conversionResult.eventId
+      });
+    } else {
+      logger.error('Erro ao enviar evento para Meta Ads:', conversionResult.error);
+      res.status(500).json({ error: 'Erro ao processar conversão' });
+    }
+
+  } catch (error) {
+    logger.error('Erro no processamento do webhook:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Função para enviar venda pendente manualmente para Utmify
 async function sendPendingSaleToUtmify(pendingSale) {
-  // Parse UTM string se necessário
   let utmParams = {
     utm_source: '',
     utm_medium: '',
@@ -95,109 +187,8 @@ app.post('/send-pending-sale', async (req, res) => {
   }
 });
 
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-// Middleware
-app.use(cors());
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'OK', 
-    timestamp: new Date().toISOString(),
-    service: 'Meta Webhook Backend'
-  });
-});
-
-app.post('/webhook/nivopay-debug', (req, res) => {
-  logger.info('Payload recebido do webhook NivoPay:', req.body);
-  res.status(200).json({ message: 'Payload recebido', payload: req.body });
-});
-
-// Webhook endpoint para receber status de pagamentos
-
-app.post('/webhook/payment-status', async (req, res) => {
-  try {
-    logger.info('Webhook recebido:', req.body);
-
-    // Validar webhook (opcional)
-    if (process.env.WEBHOOK_SECRET) {
-      const isValid = webhookValidator.validateWebhook(req);
-      if (!isValid) {
-        logger.error('Webhook inválido - assinatura não confere');
-        return res.status(401).json({ error: 'Webhook inválido' });
-      }
-    }
-
-    const webhookData = req.body;
-    const transactionId = webhookData.id || webhookData.external_id;
-    if (!transactionId) {
-      logger.error('ID da transação ausente no webhook');
-      return res.status(400).json({ error: 'ID da transação ausente' });
-    }
-
-    // Verificar se o pagamento foi aprovado
-    const isPaymentApproved = checkPaymentStatus(webhookData);
-
-    // Salvar status do pagamento
-    paymentStore.savePaymentStatus(transactionId, {
-      status: isPaymentApproved ? 'COMPLETED' : (webhookData.status || 'PENDING'),
-      amount: webhookData.amount,
-      customer: webhookData.customer,
-      items: webhookData.items || [],
-    });
-
-    if (!isPaymentApproved) {
-      logger.info('Pagamento não aprovado, ignorando webhook');
-      return res.status(200).json({ message: 'Webhook recebido - pagamento não aprovado' });
-    }
-
-    // Extrair dados do cliente e transação
-    const customerData = extractCustomerData(webhookData);
-    const transactionData = extractTransactionData(webhookData);
-
-    if (!customerData || !transactionData) {
-      logger.error('Dados insuficientes no webhook');
-      return res.status(400).json({ error: 'Dados insuficientes' });
-    }
-
-    // Enviar evento de conversão para Meta Ads
-    const conversionResult = await metaService.sendConversionEvent({
-      customer: customerData,
-      transaction: transactionData,
-      eventSource: 'website'
-    });
-
-    // Enviar dados para Utmify
-    try {
-      await sendToUtmify(webhookData);
-      logger.info('Dados enviados para Utmify com sucesso');
-    } catch (utmifyError) {
-      logger.error('Erro ao enviar dados para Utmify:', utmifyError.message);
-    }
-
-    if (conversionResult.success) {
-      logger.info('Evento de conversão enviado com sucesso para Meta Ads');
-      res.status(200).json({ 
-        message: 'Webhook processado com sucesso',
-        metaEventId: conversionResult.eventId
-      });
-    } else {
-      logger.error('Erro ao enviar evento para Meta Ads:', conversionResult.error);
-      res.status(500).json({ error: 'Erro ao processar conversão' });
-    }
-
-  } catch (error) {
-    logger.error('Erro no processamento do webhook:', error);
-    res.status(500).json({ error: 'Erro interno do servidor' });
-  }
-});
 // Função para enviar dados para Utmify
 async function sendToUtmify(webhookData) {
-  // Parse UTM string se necessário
   let utmParams = {
     utm_source: '',
     utm_medium: '',
@@ -219,7 +210,6 @@ async function sendToUtmify(webhookData) {
     utmParams.utm_term = webhookData.utm_term || '';
   }
 
-  // Mapear status para Utmify
   let statusMap = {
     'APPROVED': 'paid',
     'PAID': 'paid',
@@ -230,7 +220,6 @@ async function sendToUtmify(webhookData) {
   };
   let status = statusMap[(webhookData.status || '').toUpperCase()] || 'paid';
 
-  // Products
   let products = Array.isArray(webhookData.items) ? webhookData.items.map(item => ({
     id: item.id || '',
     name: item.name || item.title || '',
@@ -243,16 +232,13 @@ async function sendToUtmify(webhookData) {
     products = [webhookData.product];
   }
 
-  // Comissões
   const totalPriceInCents = webhookData.totalValue || webhookData.amount || 0;
   const gatewayFeeInCents = webhookData.gatewayFeeInCents || 0;
   const userCommissionInCents = webhookData.netValue || webhookData.userCommissionInCents || 0;
 
-  // Datas
   const createdAt = webhookData.createdAt || webhookData.created_at || new Date().toISOString();
   const approvedDate = webhookData.approvedAt || webhookData.updatedAt || webhookData.updated_at || createdAt;
 
-  // Montar body final
   const body = {
     orderId: webhookData.customId || webhookData.id || webhookData.externalId || webhookData.external_id || '',
     platform: 'NivoPay',
@@ -278,7 +264,7 @@ async function sendToUtmify(webhookData) {
   };
 
   const utmifyUrl = 'https://api.utmify.com.br/api-credentials/orders';
-  const utmifyToken = process.env.UTMIFY_TOKEN || 'xmnHbQedr1FctddxFvm7U0lLcZzNBApfHhr1'; // Troque pelo seu token real
+  const utmifyToken = process.env.UTMIFY_TOKEN || 'xmnHbQedr1FctddxFvm7U0lLcZzNBApfHhr1';
 
   await axios.post(utmifyUrl, body, {
     headers: {
@@ -288,7 +274,6 @@ async function sendToUtmify(webhookData) {
   });
 }
 
-// Funções auxiliares
 function checkPaymentStatus(webhookData) {
   const status = webhookData.status?.toLowerCase();
   return status === 'paid' || status === 'approved' || status === 'completed';
@@ -296,11 +281,9 @@ function checkPaymentStatus(webhookData) {
 
 function extractCustomerData(webhookData) {
   const customer = webhookData.customer || webhookData;
-  
   if (!customer.email || !customer.name) {
     return null;
   }
-
   return {
     email: customer.email,
     name: customer.name,
@@ -313,16 +296,14 @@ function extractTransactionData(webhookData) {
   if (!webhookData.amount) {
     return null;
   }
-
   return {
     transactionId: webhookData.id || webhookData.external_id,
-    value: webhookData.amount / 100, // Converter centavos para reais
+    value: webhookData.amount / 100,
     currency: 'BRL',
     items: webhookData.items || [],
     timestamp: webhookData.created_at || new Date().toISOString()
   };
 }
-
 
 // Endpoint para consultar status do pagamento usando API externa
 app.get('/payment/status', async (req, res) => {
@@ -331,15 +312,11 @@ app.get('/payment/status', async (req, res) => {
     return res.status(400).json({ error: 'Parâmetro transaction obrigatório.' });
   }
   try {
-    // Substitua pela URL real da API externa
     const apiUrl = `https://pay.nivopayoficial.com.br/api/v1/transaction.getPayment?id=${transactionId}`;
     const response = await axios.get(apiUrl, {
-      headers: {
-        Authorization: process.env.SECRET_KEY
-      }
+      headers: { Authorization: process.env.SECRET_KEY }
     });
     const payment = response.data;
-    // Retorne os dados relevantes para o frontend
     return res.json({
       status: payment.status,
       amount: payment.amount,
@@ -356,7 +333,6 @@ app.get('/payment/status', async (req, res) => {
   }
 });
 
-// Iniciar servidor
 app.listen(PORT, () => {
   logger.info(`Servidor rodando na porta ${PORT}`);
   logger.info(`Ambiente: ${process.env.NODE_ENV || 'development'}`);
