@@ -112,7 +112,9 @@ async function sendPendingSaleToUtmify(pendingSale) {
     utm_medium: '',
     utm_campaign: '',
     utm_content: '',
-    utm_term: ''
+    utm_term: '',
+    src: '',
+    sck: ''
   };
   if (pendingSale.utm) {
     const utmArr = pendingSale.utm.split('&');
